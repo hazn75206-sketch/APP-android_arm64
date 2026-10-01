@@ -1,11 +1,10 @@
-name: OBlender Android Build (skeleton)
+name: OBlender Android Full Build
 
 on:
   workflow_dispatch:
   push:
     paths:
       - '.github/workflows/android-build.yml'
-      - 'OBlender/**'
 
 env:
   ANDROID_HOME: /usr/local/lib/android/sdk
@@ -20,6 +19,8 @@ jobs:
         run: |
           df -h
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gettext libpng-dev libjpeg-dev > /dev/null
           df -h
 
       - name: Checkout APP (self)
@@ -51,7 +52,7 @@ jobs:
           fetch-depth: 1
           path: Blender-android_arm64
 
-      - name: Setup JDK 11 (Gradle 6.5 + AGP 4.1.1)
+      - name: Setup JDK 11
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -61,60 +62,98 @@ jobs:
         run: |
           set -x
           export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-          sdkmanager --version
           yes | sdkmanager --licenses || true
           sdkmanager "platform-tools" "platforms;android-30" "build-tools;30.0.3" "ndk;21.4.7075529" "cmake;3.10.2.4988404"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/21.4.7075529" >> $GITHUB_ENV
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/21.4.7075529" >> $GITHUB_ENV
-          ls $ANDROID_HOME/ndk/ || true
-          $ANDROID_HOME/cmake/3.10.2.4988404/bin/cmake --version || true
 
-      - name: Patch hardcoded Windows paths D:/FreeProjects
+      - name: Setup Gradle 6.5
         run: |
-          set -x
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
-          echo "=== files with D:/ before ==="
-          grep -rl "D:/FreeProjects" OBlender/ || echo "none in OBlender/"
-          # Replace D:/FreeProjects/Blender/Blender -> $GITHUB_WORKSPACE
-          # This makes:
-          #   Blender-android_arm64 -> $GITHUB_WORKSPACE/Blender-android_arm64
-          #   lib-android_arm64     -> $GITHUB_WORKSPACE/lib-android_arm64
-          #   Utilities .cxx output -> $GITHUB_WORKSPACE/build-intermediates (will be generated)
-          grep -rl "D:/FreeProjects/Blender/Blender" OBlender/ | xargs sed -i "s|D:/FreeProjects/Blender/Blender|$GITHUB_WORKSPACE|g" || true
-          echo "=== after patch ==="
-          grep -rn "FreeProjects\|D:/" OBlender/app/src/main/cpp/CMakeLists.txt || echo "clean, no D:/ left in app CMakeLists"
-          grep -rn "blenderLibDir" OBlender/app/src/main/cpp/CMakeLists.txt | head -n 20
-          ls -d $GITHUB_WORKSPACE/Blender-android_arm64 $GITHUB_WORKSPACE/lib-android_arm64 $GITHUB_WORKSPACE/Utilities-android_arm64 || true
-
-      - name: Show project layout
-        run: |
-          ls -R OBlender | head -n 100
-          cat OBlender/settings.gradle
-          cat OBlender/gradle/wrapper/gradle-wrapper.properties
-          java -version
-          echo "ndk=$ANDROID_NDK_HOME"
-
-      - name: Setup Gradle 6.5 (wrapper jar missing in repo)
-        run: |
-          set -x
-          ls OBlender/gradle/wrapper/ || true
-          # .gitignore *.jar removes gradle-wrapper.jar, so use system Gradle 6.5
           wget -q https://services.gradle.org/distributions/gradle-6.5-bin.zip -O /tmp/gradle-6.5.zip
           sudo unzip -q /tmp/gradle-6.5.zip -d /opt/
-          /opt/gradle-6.5/bin/gradle --version
           echo "/opt/gradle-6.5/bin" >> $GITHUB_PATH
 
-      - name: Build APK (assembleDebug)
+      - name: Patch Windows paths (OBlender + MakeBlender)
+        run: |
+          set -x
+          echo "WS=$GITHUB_WORKSPACE"
+          grep -rl "D:/FreeProjects/Blender/Blender" OBlender/ Utilities-android_arm64/ 2>/dev/null | head -n 20 || true
+          grep -rl "D:/FreeProjects/Blender/Blender" OBlender/ Utilities-android_arm64/ 2>/dev/null | xargs sed -i "s|D:/FreeProjects/Blender/Blender|$GITHUB_WORKSPACE|g" || true
+          # MakeBlender gradle points to absolute Blender CMakeLists -> patch to workspace
+          grep -rn "FreeProjects\|D:/" Utilities-android_arm64/MakeBlender/app/build.gradle OBlender/app/src/main/cpp/CMakeLists.txt || echo "clean"
+          grep -rn "blenderLibDir\|path \"" OBlender/app/src/main/cpp/CMakeLists.txt Utilities-android_arm64/MakeBlender/app/build.gradle | head -n 20
+
+      - name: Host-build makesdna + generate dna.c
+        run: |
+          set -x
+          cd $GITHUB_WORKSPACE/Blender-android_arm64
+          mkdir -p /tmp/host_dna/out
+          # compile makesdna for host (x86_64) - only needs blenlib + guardedalloc
+          gcc -o /tmp/host_dna/makesdna \
+            source/blender/makesdna/intern/makesdna.c \
+            source/blender/makesdna/intern/dna_utils.c \
+            source/blender/blenlib/intern/BLI_assert.c \
+            source/blender/blenlib/intern/BLI_ghash.c \
+            source/blender/blenlib/intern/BLI_ghash_utils.c \
+            source/blender/blenlib/intern/BLI_memarena.c \
+            source/blender/blenlib/intern/BLI_mempool.c \
+            source/blender/blenlib/intern/hash_mm2a.c \
+            intern/guardedalloc/intern/leak_detector.cc \
+            intern/guardedalloc/intern/mallocn.c \
+            intern/guardedalloc/intern/mallocn_guarded_impl.c \
+            intern/guardedalloc/intern/mallocn_lockfree_impl.c \
+            intern/guardedalloc/intern/memory_usage.cc \
+            -DWITH_DNA_GHASH \
+            -Isource/blender/makesdna \
+            -Isource/blender/blenlib \
+            -Iintern/guardedalloc \
+            -Iintern/atomic \
+            -lstdc++ -lm -lpthread || echo "HOST MAKESDNA COMPILE FAILED - will try fallback"
+          ls -lh /tmp/host_dna/ || true
+          if [ -x /tmp/host_dna/makesdna ]; then
+            /tmp/host_dna/makesdna /tmp/host_dna/out/dna.c /tmp/host_dna/out/dna_type_offsets.h /tmp/host_dna/out/dna_verify.c source/blender/makesdna/
+            ls -lh /tmp/host_dna/out/
+            head -n 5 /tmp/host_dna/out/dna.c
+          else
+            echo "SKIP dna generation, MakeBlender will fail and logs will show next fix"
+          fi
+
+      - name: Build MakeBlender release (.a libs)
+        run: |
+          set -x
+          cd $GITHUB_WORKSPACE/Utilities-android_arm64/MakeBlender
+          # first configure attempt to create .cxx dirs (expected to fail on missing dna.c)
+          gradle assembleRelease --stacktrace 2>&1 | tail -n 100 || true
+          echo "=== inject dna.c if generated ==="
+          if [ -f /tmp/host_dna/out/dna.c ]; then
+            find . -type d -name "makesdna" | head -n 10 || true
+            find $GITHUB_WORKSPACE -type d -path "*makesdna/intern" | head -n 10 || true
+            for d in $(find $GITHUB_WORKSPACE -type d -path "*blender/makesdna/intern" 2>/dev/null); do
+              echo "inject to $d"
+              cp /tmp/host_dna/out/dna.c /tmp/host_dna/out/dna_type_offsets.h /tmp/host_dna/out/dna_verify.c "$d/" || true
+            done
+          fi
+          # second real build
+          gradle assembleRelease --stacktrace 2>&1 | tail -n 150
+        continue-on-error: true
+
+      - name: Check MakeBlender .a outputs
+        if: always()
+        run: |
+          find $GITHUB_WORKSPACE/Utilities-android_arm64 -name "libbf_*.a" 2>/dev/null | head -n 20 || true
+          find $GITHUB_WORKSPACE/Utilities-android_arm64 -name "*.a" 2>/dev/null | wc -l || true
+          ls $GITHUB_WORKSPACE/Utilities-android_arm64/MakeBlender/app/.cxx/ 2>/dev/null || echo "no .cxx yet"
+
+      - name: Build OBlender APK (debug, signed auto)
         working-directory: OBlender
         run: |
           gradle assembleDebug --stacktrace 2>&1 | tail -n 300
         continue-on-error: true
 
-      - name: Collect outputs
+      - name: Collect + upload
         if: always()
         run: |
-          find . -name "*.apk" -o -name "*.aab" | head -n 20 || true
-          find OBlender -maxdepth 4 -name "build" -type d || true
+          find $GITHUB_WORKSPACE -maxdepth 6 -name "*.apk" 2>/dev/null | head -n 20 || true
           du -sh OBlender/app/build 2>/dev/null || true
 
       - name: Upload APK
