@@ -94,11 +94,20 @@ jobs:
           java -version
           echo "ndk=$ANDROID_NDK_HOME"
 
+      - name: Setup Gradle 6.5 (wrapper jar missing in repo)
+        run: |
+          set -x
+          ls OBlender/gradle/wrapper/ || true
+          # .gitignore *.jar removes gradle-wrapper.jar, so use system Gradle 6.5
+          wget -q https://services.gradle.org/distributions/gradle-6.5-bin.zip -O /tmp/gradle-6.5.zip
+          sudo unzip -q /tmp/gradle-6.5.zip -d /opt/
+          /opt/gradle-6.5/bin/gradle --version
+          echo "/opt/gradle-6.5/bin" >> $GITHUB_PATH
+
       - name: Build APK (assembleDebug)
         working-directory: OBlender
         run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace --info 2>&1 | tail -n 200
+          gradle assembleDebug --stacktrace 2>&1 | tail -n 300
         continue-on-error: true
 
       - name: Collect outputs
