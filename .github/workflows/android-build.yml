@@ -177,14 +177,17 @@ jobs:
           mkdir -p /tmp/host_rna/obj
           CFLAGS="-DWITH_DNA_GHASH $DEFINES -w -I. -I.. -I../../asset_system -I../../blenfont -I../../blenkernel -I../../blenlib -I../../blenloader -I../../blentranslation -I../../bmesh -I../../depsgraph -I../../draw -I../../gpu -I../../ikplugin -I../../imbuf -I../../makesdna -I../../modifiers -I../../nodes -I../../sequencer -I../../simulation -I../../windowmanager -I../../editors/include -I../../render -I../../../../intern/clog -I../../../../intern/cycles/blender -I../../../../intern/atomic -I../../../../intern/guardedalloc -I../../../../intern/memutil -I../../../../intern/mantaflow/extern -I/tmp/host_dna/out -I/tmp/host_rna/bin -I$GITHUB_WORKSPACE/Blender-android_arm64/source/blender/makesdna"
           FAIL=0
+          # v9: strip ../ from obj names (leading dots are skipped by *.o glob!)
+          # v9: extra -I mirror makesrna CMake WITH_* blocks (python/ffmpeg/alembic/audaspace)
+          CFLAGS="$CFLAGS -I../../python -I../../../../intern/ffmpeg -I../../io/alembic -I../../../../extern/audaspace/include"
           for f in makesrna.c rna_define.c rna_*.c ../../../../intern/clog/clog.c ../../../../intern/guardedalloc/intern/mallocn.c ../../../../intern/guardedalloc/intern/mallocn_guarded_impl.c ../../../../intern/guardedalloc/intern/mallocn_lockfree_impl.c ../../../../release/datafiles/userdef/userdef_default.c ../../../../release/datafiles/userdef/userdef_default_theme.c; do
-            n=$(echo "$f" | tr '/' '_')
-            gcc -c "$f" -o "/tmp/host_rna/obj/$n.o" $CFLAGS 2>&1 | head -n 5 || FAIL=1
+            n=$(echo "$f" | sed 's|\.\./||g' | tr '/' '_')
+            gcc -c "$f" -o "/tmp/host_rna/obj/$n.o" $CFLAGS > /tmp/host_rna/last.log 2>&1 || { echo "FAIL: $f"; head -n 5 /tmp/host_rna/last.log; FAIL=1; }
           done
           echo "C compile done FAIL=$FAIL"
           for f in ../../../../intern/guardedalloc/intern/leak_detector.cc ../../../../intern/guardedalloc/intern/memory_usage.cc; do
-            n=$(echo "$f" | tr '/' '_')
-            g++ -fpermissive -w -c "$f" -o "/tmp/host_rna/obj/$n.o" $CFLAGS -I../../../../intern/guardedalloc 2>&1 | head -n 5 || FAIL=1
+            n=$(echo "$f" | sed 's|\.\./||g' | tr '/' '_')
+            g++ -fpermissive -w -c "$f" -o "/tmp/host_rna/obj/$n.o" $CFLAGS -I../../../../intern/guardedalloc > /tmp/host_rna/last.log 2>&1 || { echo "FAIL: $f"; head -n 5 /tmp/host_rna/last.log; FAIL=1; }
           done
           echo "CC compile done FAIL=$FAIL"
           ls /tmp/host_rna/obj/ | wc -l
