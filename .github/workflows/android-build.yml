@@ -173,30 +173,22 @@ jobs:
           DEFINES=$(grep -o '\-DWITH_[A-Z0-9_]*' $GITHUB_WORKSPACE/OBlender/app/src/main/cpp/CMakeLists.txt | sort -u | tr '\n' ' ')
           echo "DEFINES=$DEFINES"
           cd $GITHUB_WORKSPACE/Blender-android_arm64/source/blender/makesrna/intern
-          # compile all rna_*.c + makesrna.c as host binary (g++ for .cc files)
-          g++ -fpermissive -w -o /tmp/host_rna/makesrna \
-            makesrna.c rna_define.c rna_*.c \
-            ../../../../intern/clog/clog.c \
-            ../../../../intern/guardedalloc/intern/leak_detector.cc \
-            ../../../../intern/guardedalloc/intern/mallocn.c \
-            ../../../../intern/guardedalloc/intern/mallocn_guarded_impl.c \
-            ../../../../intern/guardedalloc/intern/mallocn_lockfree_impl.c \
-            ../../../../intern/guardedalloc/intern/memory_usage.cc \
-            ../../../../release/datafiles/userdef/userdef_default.c \
-            ../../../../release/datafiles/userdef/userdef_default_theme.c \
-            -DWITH_DNA_GHASH $DEFINES \
-            -I. -I.. \
-            -I../../asset_system -I../../blenfont -I../../blenkernel -I../../blenlib \
-            -I../../blenloader -I../../blentranslation -I../../bmesh -I../../depsgraph \
-            -I../../draw -I../../gpu -I../../ikplugin -I../../imbuf -I../../makesdna \
-            -I../../modifiers -I../../nodes -I../../sequencer -I../../simulation \
-            -I../../windowmanager -I../../editors/include -I../../render \
-            -I../../../../intern/clog -I../../../../intern/cycles/blender \
-            -I../../../../intern/atomic -I../../../../intern/guardedalloc \
-            -I../../../../intern/memutil -I../../../../intern/mantaflow/extern \
-            -I/tmp/host_dna/out -I/tmp/host_rna/bin \
-            -I$GITHUB_WORKSPACE/Blender-android_arm64/source/blender/makesdna \
-            -lm -lpthread 2>&1 | head -n 30 || echo "MAKESRNA COMPILE ATTEMPT DONE"
+          # v8: C files with gcc (UNUSED macro is C-only), .cc with g++, then link
+          mkdir -p /tmp/host_rna/obj
+          CFLAGS="-DWITH_DNA_GHASH $DEFINES -w -I. -I.. -I../../asset_system -I../../blenfont -I../../blenkernel -I../../blenlib -I../../blenloader -I../../blentranslation -I../../bmesh -I../../depsgraph -I../../draw -I../../gpu -I../../ikplugin -I../../imbuf -I../../makesdna -I../../modifiers -I../../nodes -I../../sequencer -I../../simulation -I../../windowmanager -I../../editors/include -I../../render -I../../../../intern/clog -I../../../../intern/cycles/blender -I../../../../intern/atomic -I../../../../intern/guardedalloc -I../../../../intern/memutil -I../../../../intern/mantaflow/extern -I/tmp/host_dna/out -I/tmp/host_rna/bin -I$GITHUB_WORKSPACE/Blender-android_arm64/source/blender/makesdna"
+          FAIL=0
+          for f in makesrna.c rna_define.c rna_*.c ../../../../intern/clog/clog.c ../../../../intern/guardedalloc/intern/mallocn.c ../../../../intern/guardedalloc/intern/mallocn_guarded_impl.c ../../../../intern/guardedalloc/intern/mallocn_lockfree_impl.c ../../../../release/datafiles/userdef/userdef_default.c ../../../../release/datafiles/userdef/userdef_default_theme.c; do
+            n=$(echo "$f" | tr '/' '_')
+            gcc -c "$f" -o "/tmp/host_rna/obj/$n.o" $CFLAGS 2>&1 | head -n 5 || FAIL=1
+          done
+          echo "C compile done FAIL=$FAIL"
+          for f in ../../../../intern/guardedalloc/intern/leak_detector.cc ../../../../intern/guardedalloc/intern/memory_usage.cc; do
+            n=$(echo "$f" | tr '/' '_')
+            g++ -fpermissive -w -c "$f" -o "/tmp/host_rna/obj/$n.o" $CFLAGS -I../../../../intern/guardedalloc 2>&1 | head -n 5 || FAIL=1
+          done
+          echo "CC compile done FAIL=$FAIL"
+          ls /tmp/host_rna/obj/ | wc -l
+          g++ -fpermissive -w /tmp/host_rna/obj/*.o -o /tmp/host_rna/makesrna -lm -lpthread 2>&1 | head -n 20 || echo "LINK DONE rc=$?"
           ls -lh /tmp/host_rna/makesrna || echo "makesrna binary missing"
           if [ -x /tmp/host_rna/makesrna ]; then
             /tmp/host_rna/makesrna /tmp/host_rna/out/intern/ /tmp/host_rna/out/
