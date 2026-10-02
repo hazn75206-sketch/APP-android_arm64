@@ -93,6 +93,20 @@ jobs:
             ls $GITHUB_WORKSPACE/lib-android_arm64/cpython/include/include/Python.h && echo "python.h fixed"
           fi
 
+      - name: Fix prebuilt generated headers (v5 libpng etc)
+        run: |
+          set -x
+          # libpng: pnglibconf.h is generated, repo only has .prebuilt
+          PNGDIR=$GITHUB_WORKSPACE/lib-android_arm64/Png/include/libpng-1.6.40
+          ls $PNGDIR/scripts/ | head -n 20
+          if [ ! -f "$PNGDIR/pnglibconf.h" ] && [ -f "$PNGDIR/scripts/pnglibconf.h.prebuilt" ]; then
+            cp $PNGDIR/scripts/pnglibconf.h.prebuilt $PNGDIR/pnglibconf.h
+            echo "pnglibconf.h fixed"
+          fi
+          ls $PNGDIR/pnglibconf.h
+          # generic: list other missing generated headers early (do not fail)
+          grep -rn "pnglibconf.h" $GITHUB_WORKSPACE/lib-android_arm64 --include="*.h" | head -n 5 || true
+
       - name: Host-build makesdna v4 (gen includes first)
         run: |
           set -x
