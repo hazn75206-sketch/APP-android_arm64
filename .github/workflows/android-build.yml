@@ -174,7 +174,7 @@ jobs:
           echo "DEFINES=$DEFINES"
           cd $GITHUB_WORKSPACE/Blender-android_arm64/source/blender/makesrna/intern
           # compile all rna_*.c + makesrna.c as host binary (g++ for .cc files)
-          g++ -o /tmp/host_rna/makesrna \
+          g++ -fpermissive -w -o /tmp/host_rna/makesrna \
             makesrna.c rna_define.c rna_*.c \
             ../../../../intern/clog/clog.c \
             ../../../../intern/guardedalloc/intern/leak_detector.cc \
