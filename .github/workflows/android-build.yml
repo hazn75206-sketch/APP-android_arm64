@@ -185,7 +185,7 @@ jobs:
             gcc -c "$f" -o "/tmp/host_rna/obj/$n.o" $CFLAGS > /tmp/host_rna/last.log 2>&1 || { echo "FAIL: $f"; head -n 5 /tmp/host_rna/last.log; FAIL=1; }
           done
           echo "C compile done FAIL=$FAIL"
-          for f in ../../../../../../intern/guardedalloc/intern/leak_detector.cc ../../../../intern/guardedalloc/intern/memory_usage.cc ../../blenlib/intern/listbase.cc; do
+          for f in ../../../../intern/guardedalloc/intern/leak_detector.cc ../../../../intern/guardedalloc/intern/memory_usage.cc ../../blenlib/intern/listbase.cc; do
             n=$(echo "$f" | sed 's|\.\./||g' | tr '/' '_')
             g++ -fpermissive -w -c "$f" -o "/tmp/host_rna/obj/$n.o" $CFLAGS -I../../../../intern/guardedalloc > /tmp/host_rna/last.log 2>&1 || { echo "FAIL: $f"; head -n 5 /tmp/host_rna/last.log; FAIL=1; }
           done
