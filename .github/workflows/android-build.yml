@@ -73,22 +73,54 @@ jobs:
           sudo unzip -q /tmp/gradle-6.5.zip -d /opt/
           echo "/opt/gradle-6.5/bin" >> $GITHUB_PATH
 
-      - name: Patch Windows paths (OBlender + MakeBlender)
+      - name: Patch ALL Windows paths (v4 universal)
         run: |
           set -x
           echo "WS=$GITHUB_WORKSPACE"
-          grep -rl "D:/FreeProjects/Blender/Blender" OBlender/ Utilities-android_arm64/ 2>/dev/null | head -n 20 || true
-          grep -rl "D:/FreeProjects/Blender/Blender" OBlender/ Utilities-android_arm64/ 2>/dev/null | xargs sed -i "s|D:/FreeProjects/Blender/Blender|$GITHUB_WORKSPACE|g" || true
-          # MakeBlender gradle points to absolute Blender CMakeLists -> patch to workspace
-          grep -rn "FreeProjects\|D:/" Utilities-android_arm64/MakeBlender/app/build.gradle OBlender/app/src/main/cpp/CMakeLists.txt || echo "clean"
-          grep -rn "blenderLibDir\|path \"" OBlender/app/src/main/cpp/CMakeLists.txt Utilities-android_arm64/MakeBlender/app/build.gradle | head -n 20
+          echo "=== D:/ count before ==="
+          grep -rl "D:/FreeProjects/Blender/Blender" $GITHUB_WORKSPACE --include="*.cmake" --include="CMakeLists.txt" --include="*.gradle" 2>/dev/null | head -n 30 || true
+          grep -rl "D:/FreeProjects/Blender/Blender" $GITHUB_WORKSPACE --include="*.cmake" --include="CMakeLists.txt" --include="*.gradle" 2>/dev/null | xargs sed -i "s|D:/FreeProjects/Blender/Blender|$GITHUB_WORKSPACE|g" || true
+          echo "=== after ==="
+          grep -rn "FreeProjects\|D:/FreeProjects" $GITHUB_WORKSPACE --include="*.cmake" --include="CMakeLists.txt" --include="*.gradle" 2>/dev/null | head -n 10 || echo "clean"
+          # cpython double-include fix: error wants .../cpython/include/include/Python.h
+          # real file is .../cpython/include/Include/Python.h
+          ls $GITHUB_WORKSPACE/lib-android_arm64/cpython/include/ | head -n 20
+          ls $GITHUB_WORKSPACE/lib-android_arm64/cpython/include/Include/Python.h && echo "capital Include exists"
+          if [ ! -f "$GITHUB_WORKSPACE/lib-android_arm64/cpython/include/include/Python.h" ]; then
+            mkdir -p $GITHUB_WORKSPACE/lib-android_arm64/cpython/include/include
+            # symlink all headers from Include (capital I) to include (lowercase)
+            cp -r $GITHUB_WORKSPACE/lib-android_arm64/cpython/include/Include/* $GITHUB_WORKSPACE/lib-android_arm64/cpython/include/include/ 2>/dev/null || true
+            ls $GITHUB_WORKSPACE/lib-android_arm64/cpython/include/include/Python.h && echo "python.h fixed"
+          fi
 
-      - name: Host-build makesdna + generate dna.c
+      - name: Host-build makesdna v4 (gen includes first)
         run: |
           set -x
           cd $GITHUB_WORKSPACE/Blender-android_arm64
-          mkdir -p /tmp/host_dna/out
-          # compile makesdna for host (x86_64) - only needs blenlib + guardedalloc
+          mkdir -p /tmp/host_dna/out /tmp/host_dna/inc
+          # Generate dna_includes_all.h + dna_includes_as_strings.h from SRC_DNA_INC
+          python3 - <<'PYEOF'
+          import re, os
+          ws = os.environ['GITHUB_WORKSPACE']
+          cmake_path = os.path.join(ws, 'Blender-android_arm64/source/blender/CMakeLists.txt')
+          txt = open(cmake_path).read()
+          m = re.search(r'set\(SRC_DNA_INC(.*?)\)', txt, re.S)
+          assert m, "SRC_DNA_INC not found"
+          body = m.group(1)
+          headers = re.findall(r'\$\{CMAKE_CURRENT_SOURCE_DIR\}/(makesdna/[^\s\)]+)', body)
+          print(f"found {len(headers)} DNA headers")
+          inc_text = "/* Do not edit manually, changes will be overwritten. */\n"
+          list_text = "/* Do not edit manually, changes will be overwritten. */\n"
+          import os as _os
+          for h in headers:
+            full = _os.path.join(ws, 'Blender-android_arm64/source/blender', h)
+            inc_text += f'#include "{full}"\n'
+            list_text += f'\t"{_os.path.basename(h)}",\n'
+          open('/tmp/host_dna/inc/dna_includes_all.h','w').write(inc_text)
+          open('/tmp/host_dna/inc/dna_includes_as_strings.h','w').write(list_text)
+          print("wrote includes")
+          PYEOF
+          ls -lh /tmp/host_dna/inc/
           gcc -o /tmp/host_dna/makesdna \
             source/blender/makesdna/intern/makesdna.c \
             source/blender/makesdna/intern/dna_utils.c \
@@ -104,36 +136,29 @@ jobs:
             intern/guardedalloc/intern/mallocn_lockfree_impl.c \
             intern/guardedalloc/intern/memory_usage.cc \
             -DWITH_DNA_GHASH \
+            -I/tmp/host_dna/inc \
             -Isource/blender/makesdna \
             -Isource/blender/blenlib \
             -Iintern/guardedalloc \
             -Iintern/atomic \
-            -lstdc++ -lm -lpthread || echo "HOST MAKESDNA COMPILE FAILED - will try fallback"
-          ls -lh /tmp/host_dna/ || true
-          if [ -x /tmp/host_dna/makesdna ]; then
-            /tmp/host_dna/makesdna /tmp/host_dna/out/dna.c /tmp/host_dna/out/dna_type_offsets.h /tmp/host_dna/out/dna_verify.c source/blender/makesdna/
-            ls -lh /tmp/host_dna/out/
-            head -n 5 /tmp/host_dna/out/dna.c
-          else
-            echo "SKIP dna generation, MakeBlender will fail and logs will show next fix"
-          fi
+            -lstdc++ -lm -lpthread
+          ls -lh /tmp/host_dna/makesdna
+          /tmp/host_dna/makesdna /tmp/host_dna/out/dna.c /tmp/host_dna/out/dna_type_offsets.h /tmp/host_dna/out/dna_verify.c source/blender/makesdna/
+          ls -lh /tmp/host_dna/out/
+          head -n 3 /tmp/host_dna/out/dna.c
 
       - name: Build MakeBlender release (.a libs)
         run: |
           set -x
           cd $GITHUB_WORKSPACE/Utilities-android_arm64/MakeBlender
-          # first configure attempt to create .cxx dirs (expected to fail on missing dna.c)
           gradle assembleRelease --stacktrace 2>&1 | tail -n 100 || true
-          echo "=== inject dna.c if generated ==="
-          if [ -f /tmp/host_dna/out/dna.c ]; then
-            find . -type d -name "makesdna" | head -n 10 || true
-            find $GITHUB_WORKSPACE -type d -path "*makesdna/intern" | head -n 10 || true
-            for d in $(find $GITHUB_WORKSPACE -type d -path "*blender/makesdna/intern" 2>/dev/null); do
-              echo "inject to $d"
-              cp /tmp/host_dna/out/dna.c /tmp/host_dna/out/dna_type_offsets.h /tmp/host_dna/out/dna_verify.c "$d/" || true
-            done
-          fi
-          # second real build
+          echo "=== inject dna.c into .cxx ==="
+          find $GITHUB_WORKSPACE -type d -path "*makesdna/intern" 2>/dev/null | head -n 10 || true
+          for d in $(find $GITHUB_WORKSPACE -type d -path "*blender/makesdna/intern" 2>/dev/null); do
+            echo "inject to $d"
+            cp /tmp/host_dna/out/dna.c /tmp/host_dna/out/dna_type_offsets.h /tmp/host_dna/out/dna_verify.c "$d/" || true
+            cp /tmp/host_dna/inc/dna_includes_all.h /tmp/host_dna/inc/dna_includes_as_strings.h "$d/" || true
+          done
           gradle assembleRelease --stacktrace 2>&1 | tail -n 150
         continue-on-error: true
 
@@ -142,19 +167,12 @@ jobs:
         run: |
           find $GITHUB_WORKSPACE/Utilities-android_arm64 -name "libbf_*.a" 2>/dev/null | head -n 20 || true
           find $GITHUB_WORKSPACE/Utilities-android_arm64 -name "*.a" 2>/dev/null | wc -l || true
-          ls $GITHUB_WORKSPACE/Utilities-android_arm64/MakeBlender/app/.cxx/ 2>/dev/null || echo "no .cxx yet"
 
-      - name: Build OBlender APK (debug, signed auto)
+      - name: Build OBlender APK
         working-directory: OBlender
         run: |
           gradle assembleDebug --stacktrace 2>&1 | tail -n 300
         continue-on-error: true
-
-      - name: Collect + upload
-        if: always()
-        run: |
-          find $GITHUB_WORKSPACE -maxdepth 6 -name "*.apk" 2>/dev/null | head -n 20 || true
-          du -sh OBlender/app/build 2>/dev/null || true
 
       - name: Upload APK
         if: always()
